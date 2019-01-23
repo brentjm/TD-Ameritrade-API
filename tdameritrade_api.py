@@ -21,7 +21,6 @@ import json
 from datetime import datetime, timedelta
 import numpy as np
 import pandas as pd
-from pdb import set_trace
 
 
 class TDAmeritradeAPI:
@@ -365,8 +364,9 @@ class TDAmeritradeAPI:
         }
         self._send_request(url, data=data)
 
-    def _price_history(self, symbols=None, frequency_type="daily", frequency=1,
-                       start_date=None, end_date=None, extended_hours=False):
+    def get_price_history(self, symbols=None, frequency_type="daily",
+                          frequency=1, start_date=None, end_date=None,
+                          extended_hours=False):
         """Get the price history.
         symbols (str|list): Equity ticker symbol or list of ticker symbols.
         start_date (datetime): First date for data retrieval.
@@ -443,98 +443,12 @@ class TDAmeritradeAPI:
 
         return bars
 
-    def get_price_history(self, symbols=None, extended_hours=True,
-                          start_date=None, end_date=None):
-        """Get the price history.
-        From TD API help, for creating URL
-            period_type (str): Type of period used in number of periods
-                (day, month, year).
-            period (float): Number of periods to retrieve.
-                Valid periods by periodType (defaults marked with an asterisk):
-                    day: 1, 2, 3, 4, 5, 10*
-                    month: 1*, 2, 3, 6
-                    year: 1*, 2, 3, 5, 10, 15, 20
-                    ytd: 1*
-            frequency_type (str): Type of frequency
-                (minute, daily, weekly, monthly)
-            frequency (float): Frequency of price data.
-                Valid frequencies by frequencyType (defaults with an asterisk):
-                    minute: 1*, 5, 10, 15, 30
-                    daily: 1*
-                    weekly: 1*
-                    monthly: 1*
-
-        Arguments:
-        symbols (str|list): Equity ticker symbol or list of ticker symbols.
-        start_date (datetime): First date for data retrieval.
-        end_date (datetime): Last data for data retrieval.
-        extended_hours (bool): True to return extended hours data
-
-        return (pandas.DataFrame): Price history data.
-        """
-        number_days = (end_date - start_date).days
-        # Some reasonable defaults for different duration requests
-        if number_days == 0:
-            period_type = "day"
-            frequency_type = "minute"
-            frequency = 5
-        elif number_days == 1:
-            period_type = "day"
-            frequency_type = "minute"
-            frequency = 15
-        elif number_days > 1:
-            period_type = "month"
-            frequency_type = "daily"
-            frequency = 1
-
-        start_date = int(start_date.strftime("%s"))*1000
-        end_date = int(end_date.strftime("%s"))*1000
-
-        # If user passed a string, make it an itterable (list).
-        if type(symbols) is str:
-            symbols = [symbols]
-
-        data = dict()
-        for symbol in symbols:
-            url = "marketdata/{}/pricehistory?periodType={}&frequencyType={}"\
-                + "&frequency={}&endDate={}&startDate={}"\
-                + "&needExtendedHoursData={}"
-            url = url.format(symbol, period_type, frequency_type, frequency,
-                             end_date, start_date, extended_hours)
-            self._send_request(url)
-
-            temp_data = np.array([[datetime.fromtimestamp(
-                                 t["datetime"]/1000.).date(),
-                                 t["open"], t["high"], t["low"],
-                                 t["close"], t["volume"]]
-                             for t in self.response["candles"]])
-            temp_data = pd.DataFrame(index=temp_data[:, 0],
-                                     columns=["open_price", "high", "low",
-                                              "close_price", "volume"],
-                                     data=temp_data[:, 1:])
-
-            data.update({symbol: temp_data})
-
-        # Create a MultiIndex DataFrame.
-        columns = pd.MultiIndex.from_product([sorted(list(data.keys())),
-            ["close_price", "high", "low", "open_price", "volume"]],
-            names=["symbol", "price"])
-
-        bars = pd.DataFrame(index=temp_data.index, columns=columns)
-
-        for d in data:
-            bars[d] = data[d]
-
-        # Try to get rid of any missing data.
-        bars.fillna(method="ffill", inplace=True)
-
-        return bars
-
     def get_quotes(self, symbols=None):
         """Get price quotes
 
         Arguments:
-            symbols (str|list): String or list of strings of the ticker symbols.
+            symbols (str|list): String or list of strings of the ticker
+            symbols.
 
         Returns Pandas DataFrame of quote.
         """
