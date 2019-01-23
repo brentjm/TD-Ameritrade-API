@@ -365,6 +365,84 @@ class TDAmeritradeAPI:
         }
         self._send_request(url, data=data)
 
+    def _price_history(self, symbols=None, frequency_type="daily", frequency=1,
+                       start_date=None, end_date=None, extended_hours=False):
+        """Get the price history.
+        symbols (str|list): Equity ticker symbol or list of ticker symbols.
+        start_date (datetime): First date for data retrieval.
+        end_date (datetime): Last data for data retrieval.
+        frequency_type (str): Type of frequency
+            (minute, daily, weekly, monthly)
+        frequency (float): Frequency of price data.
+            Valid frequencies by frequencyType (defaults with an asterisk):
+                minute: 1*, 5, 10, 15, 30
+                daily: 1*
+                weekly: 1*
+                monthly: 1*
+        extended_hours (bool): True to return extended hours data
+        """
+        start_date = int(start_date.strftime("%s"))*1000
+        end_date = int(end_date.strftime("%s"))*1000
+
+        # If user passed a string, make it an itterable (list).
+        if type(symbols) is str:
+            symbols = [symbols]
+
+        url = "frequencyType={}&frequency={}"\
+            + "&endDate={}&startDate={}"\
+            + "&needExtendedHoursData={}"
+        url = url.format(frequency_type, frequency,
+                         end_date, start_date,
+                         extended_hours)
+
+        # If frequencyType is "minute" then periodType is not needed
+        # in the url. However, "periodType" is needed for frequencyType
+        # of "daily", "weekly" or "monthly"
+        if frequency_type != "minute":
+            url = "periodType=year&"+url
+
+        data = dict()
+        for symbol in symbols:
+            url = "marketdata/{}/pricehistory?".format(symbol) + url
+            self._send_request(url)
+            # If the frequency_type is minute, then include the
+            # time in the date field, but if the frequency_type
+            # is not minute, then just use the date (no time).
+            if frequency_type == "minute":
+                temp_data = np.array([[datetime.fromtimestamp(
+                                t["datetime"]/1000.),
+                                t["open"], t["high"], t["low"],
+                                t["close"], t["volume"]]
+                             for t in self.response["candles"]])
+            else:
+                temp_data = np.array([[datetime.fromtimestamp(
+                                t["datetime"]/1000.).date(),
+                                t["open"], t["high"], t["low"],
+                                t["close"], t["volume"]]
+                             for t in self.response["candles"]])
+
+            temp_data = pd.DataFrame(index=temp_data[:, 0],
+                                     columns=["open_price", "high", "low",
+                                     "close_price", "volume"],
+                                     data=temp_data[:, 1:])
+
+            data.update({symbol: temp_data})
+
+        # Create a MultiIndex DataFrame.
+        columns = pd.MultiIndex.from_product([sorted(list(data.keys())),
+            ["close_price", "high", "low", "open_price", "volume"]],
+            names=["symbol", "price"])
+
+        bars = pd.DataFrame(index=temp_data.index, columns=columns)
+
+        for d in data:
+            bars[d] = data[d]
+
+        # Try to get rid of any missing data.
+        bars.fillna(method="ffill", inplace=True)
+
+        return bars
+
     def get_price_history(self, symbols=None, extended_hours=True,
                           start_date=None, end_date=None):
         """Get the price history.
@@ -425,14 +503,15 @@ class TDAmeritradeAPI:
                              end_date, start_date, extended_hours)
             self._send_request(url)
 
-            temp_data = np.array([[datetime.fromtimestamp(t["datetime"]/1000.).date(),
-                             t["open"], t["high"], t["low"],
-                             t["close"], t["volume"]]
+            temp_data = np.array([[datetime.fromtimestamp(
+                                 t["datetime"]/1000.).date(),
+                                 t["open"], t["high"], t["low"],
+                                 t["close"], t["volume"]]
                              for t in self.response["candles"]])
             temp_data = pd.DataFrame(index=temp_data[:, 0],
-                                columns=["open_price", "high", "low",
-                                         "close_price", "volume"],
-                                data=temp_data[:, 1:])
+                                     columns=["open_price", "high", "low",
+                                              "close_price", "volume"],
+                                     data=temp_data[:, 1:])
 
             data.update({symbol: temp_data})
 
