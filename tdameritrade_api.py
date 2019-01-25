@@ -21,6 +21,7 @@ import json
 from datetime import datetime, timedelta
 import numpy as np
 import pandas as pd
+from pdb import set_trace
 
 
 class TDAmeritradeAPI:
@@ -476,7 +477,7 @@ class TDAmeritradeAPI:
         symbol_url = "%2C".join(symbols)
         url = "instruments?symbol={}&projection=fundamental".format(symbol_url)
         self._send_request(url)
-
+        set_trace()
         data = dict()
         for ticker in self.response.keys():
             data[ticker] = self.response[ticker]['fundamental']
