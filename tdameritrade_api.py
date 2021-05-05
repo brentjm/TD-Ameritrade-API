@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 Module to facilitate working with TDAmeritrades
 web based API.
@@ -6,11 +7,16 @@ Brent Maranzano
 July 29, 2018
 
 Example:
-    >>td = TDAmeritrade("account_number.txt", "oAuth.txt")
+    >>td = TDAmeritradeAPI.create_api_from_account_file("sample_info.json")
+    login url  = https://auth.tdameritrade.com/auth?response_type=code&redirect_uri=.....
+    manually login from the above url by browser
+    copy the <token> from redirect url from browser
+    enter your token: <paste_the_token_here>
+
     >>td.get_watchlist()
 
 Class:
-    TDAmeritrade
+    TDAmeritradeAPI
 
 """
 import urllib.request
@@ -19,8 +25,8 @@ from urllib import parse
 import logging
 import json
 from datetime import datetime, timedelta
-import numpy as np
-import pandas as pd
+#import numpy as np
+#import pandas as pd
 
 
 class TDAmeritradeAPI:
@@ -81,8 +87,7 @@ class TDAmeritradeAPI:
         self._logger = logger
 
     @staticmethod
-    def get_access_token(client_id=None, callback_url=None,
-                         refresh_token=None):
+    def get_initial_access_token(client_id=None, callback_url=None, refresh_token=None):
         """Get an access token using the refesh token.
         see https://developer.tdameritrade.com/content/simple-auth-local-apps
 
@@ -98,10 +103,13 @@ class TDAmeritradeAPI:
         callback_url = parse.quote(callback_url)
         refresh_token = parse.quote(refresh_token)
 
-        data = "grant_type=refresh_token" + \
-            "&refresh_token={}".format(refresh_token) + \
+        data = "grant_type=authorization_code" + \
+            "&access_type=offline" + \
+            "&refresh_token=" + \
+            "&code={}".format(refresh_token) + \
             "&client_id={}".format(client_id) + \
             "&redirect_uri={}".format(callback_url)
+
 
         data = data.encode("utf-8")
 
@@ -111,7 +119,14 @@ class TDAmeritradeAPI:
         try:
             response = urllib.request.urlopen(request, data=data)
         except HTTPError as http_error:
+            print(url)
+            print(data)
             raise http_error
+        except Exception as e:
+            print(url)
+            print(data)
+            print(e)
+            raise e
 
         return json.loads(response.read().decode())["access_token"]
 
@@ -122,18 +137,30 @@ class TDAmeritradeAPI:
 
         Arguments
         filename (str): Name of file with account, API, and token information
+                        ref to sample_info.json
+
+
         """
         with open(filename) as file_obj:
             information = json.load(file_obj)
 
-        access_token = TDAmeritradeAPI.get_access_token(
-            client_id=information["client_id"],
-            callback_url=information["callback_url"],
-            refresh_token=information["refresh_token"]
-        )
+            callback_url = information["callback_url"]
+            client_id = information["client_id"] + "@AMER.OAUTHAP"
+            account_number = information["account_number"]
 
-        return cls(account_number=information["account_number"],
-                   oauth_certificate=access_token)
+            login_url = "https://auth.tdameritrade.com/auth?response_type=code&redirect_uri=%s&client_id=%s"%(parse.quote(callback_url), parse.quote(client_id))
+            print("go : ", login_url)
+            token = input("token:")
+            token = parse.unquote(token)
+
+
+            access_token = TDAmeritradeAPI.get_initial_access_token(
+                client_id=client_id,
+                callback_url=callback_url,
+                refresh_token=token
+            )
+
+        return cls(account_number=account_number, oauth_certificate=access_token)
 
     def _send_request(self, url, data=None):
         """Make the rpc. Creates a request object from a base url contatenated
@@ -155,6 +182,7 @@ class TDAmeritradeAPI:
                 response = urllib.request.urlopen(request)
                 self._logger.info("URL: %s", request.get_full_url())
                 self.response = json.loads(response.read().decode("utf-8"))
+                self._logger.info("Response: %s", json.dumps(self.response, indent=4, sort_keys=True))
             except HTTPError as http_error:
                 self._logger.error("URL: %s", request.get_full_url())
                 self._logger.error("headers: %s", request.headers)
@@ -167,11 +195,15 @@ class TDAmeritradeAPI:
                 request.add_header("Content-Length", len(data))
                 self.response = urllib.request.urlopen(request, data=data)
                 self._logger.info("URL: %s", request.get_full_url())
+                self._logger.info("Response: %s", json.dumps(self.response, indent=4, sort_keys=True))
             except HTTPError as http_error:
                 self._logger.error("URL: %s", request.get_full_url())
                 self._logger.error("headers: %s", request.headers)
                 self._logger.error("data: %s", data)
                 raise http_error
+
+
+
 
     def get_account_info(self, fields=None):
         """Get account information.
@@ -180,11 +212,18 @@ class TDAmeritradeAPI:
             fields (list) optional: List of fields requested.
             (e.g. ["positions", "orders"])
         """
-        fields = ",".join(fields)
+        if fields is None:
+            fields = ""
+        else:
+            fields = ",".join(fields)
         url = "accounts/{}?fields={}".format(self.account_number, fields)
         self._send_request(url)
         return self.response
 
+
+
+
+    ## all high level support api here: 
     def get_orders(self, max_results=None, from_date=None, to_date=None,
                    order_status=None):
         """Get orders.
