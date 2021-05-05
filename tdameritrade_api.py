@@ -25,8 +25,6 @@ from urllib import parse
 import logging
 import json
 from datetime import datetime, timedelta
-#import numpy as np
-#import pandas as pd
 
 
 class TDAmeritradeAPI:
@@ -39,7 +37,7 @@ class TDAmeritradeAPI:
         rpc.
         logger (logger): Logger
         account_number: TD Ameritrade account number to post rpcs
-        oauth_certificate: OAuth 2.0 certificate used to validate rpc
+        access_token: OAuth 2.0 certificate used to validate rpc
 
     Example:
     >>td = TDAmeritrade.create_api_from_account_file(
@@ -47,25 +45,26 @@ class TDAmeritradeAPI:
     >>td.get_watchlist()
 
     """
-    def __init__(self, account_number=None, oauth_certificate=None):
+    def __init__(self, account_number=None, access_token=None, refresh_token=None):
         """Create the API class using the account number and oauth certificate
         to validate requests.
 
         Arguments:
             account_number (str): Account number.
-            oauth_certificate (str): oAuth2.0 certificate.
+            access_token(str): oAuth2.0 certificate.
         """
         self._setup_logging()
 
         if account_number is None:
             self._logger.error(
                 "TDAmeritrade instantiation requires an account number.")
-        if oauth_certificate is None:
+        if access_token is None:
             self._logger.error(
                 "TDAmeritrade instantiation requires oAuth certificate.")
 
         self.account_number = account_number
-        self.oauth_certificate = oauth_certificate
+        self.access_token = access_token
+        self.refresh_token = refresh_token
         self.response = None
 
     def _setup_logging(self):
@@ -78,7 +77,7 @@ class TDAmeritradeAPI:
         file_handle.setLevel(logging.INFO)
         console_handle = logging.StreamHandler()
         console_handle.setLevel(logging.ERROR)
-        log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        log_format = '%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] -  %(message)s'
         formatter = logging.Formatter(log_format)
         file_handle.setFormatter(formatter)
         console_handle.setFormatter(formatter)
@@ -87,15 +86,7 @@ class TDAmeritradeAPI:
         self._logger = logger
 
     @staticmethod
-    def get_initial_access_token(client_id=None, callback_url=None, refresh_token=None):
-        """Get an access token using the refesh token.
-        see https://developer.tdameritrade.com/content/simple-auth-local-apps
-
-        Arguments:
-        client_id (str): API client ID.
-        callback_url (str): API callback URL
-        refresh_token (str): Refresh token
-        """
+    def get_access_token_by_refresh_token(client_id=None, callback_url=None, refresh_token=None):
         url = "https://api.tdameritrade.com/v1/oauth2/token"
         request = urllib.request.Request(url)
 
@@ -103,10 +94,8 @@ class TDAmeritradeAPI:
         callback_url = parse.quote(callback_url)
         refresh_token = parse.quote(refresh_token)
 
-        data = "grant_type=authorization_code" + \
-            "&access_type=offline" + \
-            "&refresh_token=" + \
-            "&code={}".format(refresh_token) + \
+        data = "grant_type=refresh_token" + \
+            "&refresh_token={}".format(refresh_token) + \
             "&client_id={}".format(client_id) + \
             "&redirect_uri={}".format(callback_url)
 
@@ -128,7 +117,76 @@ class TDAmeritradeAPI:
             print(e)
             raise e
 
-        return json.loads(response.read().decode())["access_token"]
+        resp = json.loads(response.read().decode())
+        print(json.dumps(resp, indent=4))
+        return resp
+
+    @staticmethod
+    def get_initial_access_token(client_id=None, callback_url=None, code=None):
+        # TODO(BC) : get_inital_access_token can be support to refresh_token in future
+        """Get an access token using the refesh token.
+        see https://developer.tdameritrade.com/content/simple-auth-local-apps
+
+        Arguments:
+        client_id (str): API client ID.
+        callback_url (str): API callback URL
+        code (str): oauth auth code
+        """
+        url = "https://api.tdameritrade.com/v1/oauth2/token"
+        request = urllib.request.Request(url)
+
+        client_id = parse.quote(client_id)
+        callback_url = parse.quote(callback_url)
+        code = parse.quote(code)
+
+        data = "grant_type=authorization_code" + \
+            "&access_type=offline" + \
+            "&refresh_token=" + \
+            "&code={}".format(code) + \
+            "&client_id={}".format(client_id) + \
+            "&redirect_uri={}".format(callback_url)
+
+
+        data = data.encode("utf-8")
+
+        request.add_header(key="Content-Type",
+                           val="application/x-www-form-urlencoded")
+        request.add_header(key="Content-Length", val=len(data))
+        try:
+            response = urllib.request.urlopen(request, data=data)
+        except HTTPError as http_error:
+            print(url)
+            print(data)
+            raise http_error
+        except Exception as e:
+            print(url)
+            print(data)
+            print(e)
+            raise e
+
+        resp = json.loads(response.read().decode())
+        print(json.dumps(resp, indent=4))
+        return resp
+
+    def refresh_from_refresh_token(self, filename):
+        with open(filename) as file_obj:
+            information = json.load(file_obj)
+
+            callback_url = information["callback_url"]
+            client_id = information["client_id"] + "@AMER.OAUTHAP"
+            account_number = information["account_number"]
+
+            access_token_resp = TDAmeritradeAPI.get_access_token_by_refresh_token(
+                client_id=client_id,
+                callback_url=callback_url,
+                refresh_token=self.refresh_token
+            )
+
+            access_token = access_token_resp['access_token']
+            refresh_token = access_token_resp.get('refresh_token', None)
+
+        return cls(account_number=account_number, access_token=access_token, refresh_token=refresh_token)
+
 
     @classmethod
     def create_api_from_account_file(cls, filename=None):
@@ -154,13 +212,16 @@ class TDAmeritradeAPI:
             token = parse.unquote(token)
 
 
-            access_token = TDAmeritradeAPI.get_initial_access_token(
+            access_token_resp = TDAmeritradeAPI.get_initial_access_token(
                 client_id=client_id,
                 callback_url=callback_url,
-                refresh_token=token
+                code=token
             )
 
-        return cls(account_number=account_number, oauth_certificate=access_token)
+            access_token = access_token_resp['access_token']
+            refresh_token = access_token_resp['refresh_token']
+
+        return cls(account_number=account_number, access_token=access_token, refresh_token=refresh_token)
 
     def _send_request(self, url, data=None):
         """Make the rpc. Creates a request object from a base url contatenated
@@ -176,7 +237,7 @@ class TDAmeritradeAPI:
         url = base_url + url
         request = urllib.request.Request(url)
         request.add_header("Authorization", "Bearer {}"
-                           .format(self.oauth_certificate).encode("utf-8"))
+                           .format(self.access_token).encode("utf-8"))
         if data is None:
             try:
                 response = urllib.request.urlopen(request)
@@ -186,6 +247,8 @@ class TDAmeritradeAPI:
             except HTTPError as http_error:
                 self._logger.error("URL: %s", request.get_full_url())
                 self._logger.error("headers: %s", request.headers)
+                self._logger.error("body: %s", http_error.reason)
+
                 raise http_error
         else:
             try:
@@ -200,6 +263,7 @@ class TDAmeritradeAPI:
                 self._logger.error("URL: %s", request.get_full_url())
                 self._logger.error("headers: %s", request.headers)
                 self._logger.error("data: %s", data)
+                self._logger.error("body: %s", http_error.reason)
                 raise http_error
 
 
@@ -586,3 +650,51 @@ class TDAmeritradeAPI:
             } for order in orders]
 
         return pd.DataFrame.from_records(orders)
+
+    def _build_param_string(self, required_param, param):
+        final_param = required_param.copy()
+        final_param.update(param)
+        url = ""
+        for (key, value) in final_param.items():
+            url +=  ( "&" +  parse.quote(key) + "=" + parse.quote(value) )
+
+        return url[1:]
+
+
+    def get_option_chain(self, symbols=[], param={}):
+        """get option_chain for symbols 
+        Get the price history.
+        symbols (str|list): Equity ticker symbol or list of ticker symbols.
+        param (dict) : param need to send to api
+        """
+
+        #today = datetime.now().strftime('%Y-%m-%dT00:00:00')
+        #one_year_later = (datetime.now()+timedelta(days=365)).strftime('%Y-%m-%dT00:00:00')
+        today = datetime.now().strftime('%Y-%m-%d')
+        one_year_later = (datetime.now()+timedelta(days=365)).strftime('%Y-%m-%d')
+
+        required_param = { 
+            "contractType":     "ALL",
+            "strikeCount":      "24",
+            "includeQuotes":    "FALSE",
+#            "strategy":         "ANALYTICAL",   # default : SINGLE
+            "strategy":         "SINGLE",   # default : SINGLE
+            "range":            "ALL",
+            "fromDate":         today,
+            "toDate":           one_year_later,
+        }
+        
+
+        # If user passed a string, make it an itterable (list).
+        if type(symbols) is str:
+            symbols = [symbols]
+
+        data = []
+        for symbol in symbols:
+            param['symbol'] = symbol
+            url = self._build_param_string(required_param, param)
+            url = "marketdata/chains?" + url
+            self._send_request(url)
+            data.append(self.response)
+
+        return data
